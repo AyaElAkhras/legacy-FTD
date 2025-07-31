@@ -67,6 +67,97 @@ void labelBooleanOperations(std::vector<ENode*>* enode_dag) {
 
 }
 
+bool is_reachable(ENode* from, ENode* target, std::unordered_set<ENode*>& visited, bool isCntrlNet) {
+    if (!visited.insert(from).second)
+        return false;
+
+    if (from == target)
+        return true;
+
+    // If we hit a Phi_n and it's NOT the target, this path is invalid
+    if ((from->type == Phi_n || from->type == Phi_) && from != target)
+        return false;
+
+    if(isCntrlNet)
+	    for (auto& succ : *from->JustCntrlSuccs) {
+	        if (is_reachable(succ, target, visited, isCntrlNet))
+	            return true;
+	    }
+    else
+    	for (auto& succ : *from->CntrlSuccs) {
+	        if (is_reachable(succ, target, visited, isCntrlNet))
+	            return true;
+	    }
+
+    return false;
+}
+
+bool is_reachable(ENode* from, ENode* target, bool isCntrlNet) {
+    std::unordered_set<ENode*> visited;
+    return is_reachable(from, target, visited, isCntrlNet);
+}
+
+
+void fixForkOutputsToConditions(std::vector<ENode*>* enode_dag) {
+	for (auto& enode : *enode_dag) {
+		if(!enode->is_merge_init)
+			continue;
+
+		// assert that one of the predcessors should be a Fork_
+		ENode* fork = nullptr;
+		for (auto& pred : *enode->CntrlPreds) {
+			if(pred->type == Fork_) {
+				fork = pred;
+				break;
+			}
+		}
+		assert(fork);
+
+		// ensure that the first output of the fork is the init
+		int init_idx = -1;
+		for (int i = 0; i < fork->CntrlSuccs->size(); i++) {
+			if(fork->CntrlSuccs->at(i)->is_merge_init) {
+				init_idx = i;
+				break;
+			}
+		}
+		assert(init_idx != -1);
+
+		// Swap to make merge_init enode first output
+	    std::swap(fork->CntrlSuccs->at(0), fork->CntrlSuccs->at(init_idx));
+
+	    // Step 3: Ensure the init enode has a single successor of type Fork_
+	    assert(enode->CntrlSuccs->size() == 1);
+	    ENode* init_fork_succ = nullptr;
+	    for (auto& succ : *enode->CntrlSuccs) {
+	        if (succ->type == Fork_) {
+	            init_fork_succ = succ;
+	            break;
+	        }
+	    }
+	    assert(init_fork_succ);
+
+	    // Step 4: Match other outputs of input fork to outputs of enode's Fork_ successor
+	    for (size_t i = 1; i < fork->CntrlSuccs->size(); ++i) {
+	        ENode* out_i = fork->CntrlSuccs->at(i);
+	        bool isCntrlNet = false;
+	        if(out_i->type == Branch_c)
+	        	isCntrlNet = true;
+
+	        for (size_t j = 0; j < init_fork_succ->CntrlSuccs->size(); ++j) {
+	            ENode* out_j = init_fork_succ->CntrlSuccs->at(j);
+	            if (is_reachable(out_i, out_j, isCntrlNet)) {
+	                // Swap outputs in enode_fork_succ to match order
+	                if (i-1 != j) {
+	                	std::swap(init_fork_succ->CntrlSuccs->at(i-1), init_fork_succ->CntrlSuccs->at(j));
+	                }
+	                break;
+	            }
+	        }
+	    }
+	}
+}
+
 ////////////////////////////// Aya's stuff
 void aya_printDotDFG(std::vector<ENode*>* enode_dag, std::vector<BBNode*>* bbnode_dag, std::string name, std::string serial_number, bool fix_mc_st_interfaces_flag, const std::string& tag_info_path) {
     std::string output_filename = name;
@@ -85,6 +176,8 @@ void aya_printDotDFG(std::vector<ENode*>* enode_dag, std::vector<BBNode*>* bbnod
     infoStr += "\" [shape = \"none\" pos = \"20,20!\"]\n";
 
     dotfile << infoStr;
+
+    fixForkOutputsToConditions(enode_dag);
 
     /* printDotNodes should print the following: 
 	- write the basic block number 
