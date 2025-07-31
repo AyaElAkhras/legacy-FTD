@@ -148,6 +148,7 @@ std::string aya_printForkEdges(ENode* fork_enode) {
 	int occur_num;
 	// will initially loop over all CntrlSuccs to identify the indices of repeated CntrlSuccs, if any..
 	for (int i = 0; i < fork_enode->CntrlSuccs->size(); i++ ) {
+
 		occur_num = 0;
 
 		ENode* fork_succ = fork_enode->CntrlSuccs->at(i);
@@ -175,6 +176,10 @@ std::string aya_printForkEdges(ENode* fork_enode) {
 				str += aya_printForkEdges_helper(fork_succ, fork_enode, occur_num);
 			}
 		} else {
+			if(fork_succ->is_merge_init) {
+				str += ", to = \"in1\"";
+				str += "];\n";
+			} else
 			// AYA: 04/11/2021: Removed what I added on 03/11/2021
 
 			// AYA: 03/11/2021: Added this for correctly printing the condition that is now in the data network even for the control branch!
@@ -232,6 +237,10 @@ std::string aya_printDataflowEdges(std::vector<ENode*>* enode_dag, std::vector<B
 
 	// loop over all enodes 
 	for (auto& enode : *enode_dag) {
+		if(enode->type == Cst_ && enode->CntrlSuccs->size() == 1){
+			if(enode->CntrlSuccs->at(0)->is_merge_init)
+				continue;  // do not print the constant input with the new Init design
+		} 
 		//if(enode->is_redunCntrlNet)
 			//continue;
 
@@ -313,7 +322,6 @@ std::string aya_printDataflowEdges(std::vector<ENode*>* enode_dag, std::vector<B
 				} 
 
 //////////////////////////////////////////////////////////////////////////////////////////	
-				//if(enode_succ->isLoadOrStore()) {
 				if(enode_succ->type == Inst_) {
 					if(isa<LoadInst>(enode_succ->Instr)){
 
@@ -742,10 +750,11 @@ void aya_printDotNodes(std::vector<ENode*>* enode_dag, std::string serial_number
 
 		// loop over enodes searching for those inside the current basic block
 		for (auto& enode : *enode_dag) {
-			// print only nodes in the same basic block as the current one
-			
+			if(enode->type == Cst_ && enode->CntrlSuccs->size() == 1){
+				if(enode->CntrlSuccs->at(0)->is_merge_init)
+					continue;  // do not print the constant input with the new Init design
+			} // print only nodes in the same basic block as the current one
 			if((enode->BB == bnd->BB) && !skipNodePrint(enode)){
-
 				dotline += "\t\t";
 				dotline += getNodeDotNameNew(enode);
 				dotline += " [";
@@ -1169,14 +1178,20 @@ std::string getNodeDotNameNew(ENode* enode) {
         case Argument_:
             name += enode->argName.c_str();
             break;
-        case Phi_n:
-		// AYA: 25/02/2022: added the following case to account for the token injector
 		case Inj_n:
             name += enode->Name;
             name += "_n";
             name += to_string(enode->id);
             break;
-		
+    	case Phi_n:
+    		if(enode->is_merge_init)
+    			name += "Init";
+    		else
+    			name += enode->Name;
+            name += "_";
+            name += to_string(enode->id);
+            break;
+
         default:  // Aya note to self: 28/02/2023: I assume I do not need to do anything special for Loop_Phi_n or Loop_Phi_c
             name += enode->Name;
             name += "_";
@@ -1207,7 +1222,10 @@ std::string getNodeDotTypeNew(ENode* enode) {
             		assert(enode->isCntrlMg);
             		name += "CntrlMerge";
             	} else {
-	                name += "Merge";
+            		if(enode->is_merge_init)
+            			name += "Init";
+            		else
+	                	name += "Merge";
             	}
             }
             break;
@@ -1527,12 +1545,18 @@ std::string getNodeDotInputs(ENode* enode, bool fix_mc_st_interfaces_flag, int t
         case Phi_:
         case Phi_n:
         case Phi_c:
-        case Loop_Phi_n:  // AYA: 28/02/2023: added the following two types 
+        case Loop_Phi_n: 
         case Loop_Phi_c:
+        	if(enode->is_merge_init) {
+        		name += ", in = \"";
+        		name += "in1";
+		        name += ":1";
+		        name += "\"";
+        	}
 			// check first, if the node is Phi_c and is part of the redundant control graph, then all the conditions should be on CntrlOrderPreds
 
 			// Aya: 27/09/2021 added the following condition to deal with the case where we trigger a return instruction through the redunCntrlNetwork in case the function returns to void
-			if( (enode->type == Phi_c && enode->is_redunCntrlNet) /*|| (enode->type == Inst_ && enode->Name.compare("ret") == 0 && enode->CntrlPreds->size() == 0) */ ) {
+			else if( (enode->type == Phi_c && enode->is_redunCntrlNet) /*|| (enode->type == Inst_ && enode->Name.compare("ret") == 0 && enode->CntrlPreds->size() == 0) */ ) {
 					// Aya added this line!!
 	 			if (enode->CntrlOrderPreds->size() > 0)
 		             name += ", in = \"";

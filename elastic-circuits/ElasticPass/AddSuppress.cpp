@@ -1516,15 +1516,16 @@ void CircuitGenerator::convertToMux(networkType network_flag, ENode* phi, ENode*
 			merge_for_sel->CntrlPreds->push_back(cst_condition);
 			cst_condition->CntrlSuccs->push_back(merge_for_sel);
 
+			// With the new implementation of Init, we do not want to trigger the constant with anything to easily discard it in printDot
 			// trigger the constant from START
 			// a direct connection to START since the initialization token should arrive to the mux at the loop header regardless of any control structure!!!
-			for(auto& cnt_node : *bbnode_dag->front()->Cntrl_nodes) {
-				if(cnt_node->type == Start_) {
-					cst_condition->JustCntrlPreds->push_back(cnt_node);
-					cnt_node->JustCntrlSuccs->push_back(cst_condition);
-					break; // found the start node, no need to continue looping
-				}
-			} 
+			// for(auto& cnt_node : *bbnode_dag->front()->Cntrl_nodes) {
+			// 	if(cnt_node->type == Start_) {
+			// 		cst_condition->JustCntrlPreds->push_back(cnt_node);
+			// 		cnt_node->JustCntrlSuccs->push_back(cst_condition);
+			// 		break; // found the start node, no need to continue looping
+			// 	}
+			// } 
 		}
 
 		// feed the Merge with the supp_cond
